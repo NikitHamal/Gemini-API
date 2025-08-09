@@ -202,3 +202,13 @@ Temporary Items
 
 # Temporary files
 temp/
+
+# Android
+/build
+/app/build
+/.gradle
+local.properties
+*.jks
+*.keystore
+.idea/
+*.iml
