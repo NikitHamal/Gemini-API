@@ -19,7 +19,7 @@ public class ChatSession {
      * Constructor for starting a new chat.
      * @param client The GeminiClient instance to use for communication.
      */
-    ChatSession(GeminiClient client) {
+    public ChatSession(GeminiClient client) {
         this.client = client;
     }
 
@@ -30,7 +30,7 @@ public class ChatSession {
      * @param rid The existing reply ID.
      * @param rcid The existing reply candidate ID.
      */
-    ChatSession(GeminiClient client, String cid, String rid, String rcid) {
+    public ChatSession(GeminiClient client, String cid, String rid, String rcid) {
         this.client = client;
         this.cid = cid;
         this.rid = rid;
