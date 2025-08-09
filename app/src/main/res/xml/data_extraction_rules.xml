@@ -6,13 +6,7 @@
         You can include or exclude files and directories from cloud backups.
         See https://developer.android.com/guide/topics/data/autobackup
         -->
+        <!-- Back up all shared preferences by default -->
         <include domain="sharedpref" path="."/>
-        <exclude domain="database" path="."/>
     </cloud-backup>
-    <!--
-    <device-transfer>
-        <include .../>
-        <exclude .../>
-    </device-transfer>
-    -->
 </data-extraction-rules>
