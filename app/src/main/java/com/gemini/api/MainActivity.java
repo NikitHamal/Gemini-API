@@ -20,6 +20,7 @@ import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import com.gemini.api.client.ChatSession;
 import com.gemini.api.client.GeminiClient;
 import com.gemini.api.client.models.ModelOutput;
 import com.gemini.api.persistence.Conversation;
@@ -38,8 +39,10 @@ public class MainActivity extends AppCompatActivity {
 
     private DrawerLayout drawerLayout;
     private NavigationView navigationView;
+    private RecyclerView chatRecyclerView;
     private ConversationManager conversationManager;
     private Conversation currentConversation;
+    private ChatSession currentChatSession;
     private List<ChatMessage> messages;
     private ChatAdapter chatAdapter;
     private GeminiClient geminiClient;
@@ -87,26 +90,27 @@ public class MainActivity extends AppCompatActivity {
 
         sendButton.setOnClickListener(v -> {
             String text = messageEditText.getText().toString().trim();
-            if (text.isEmpty()) return;
-            if (geminiClient == null) {
-                Toast.makeText(this, "Client not initialized. Check credentials in Settings.", Toast.LENGTH_LONG).show();
+            if (text.isEmpty() || geminiClient == null || currentChatSession == null) {
+                Toast.makeText(this, "Client not ready or no active chat.", Toast.LENGTH_LONG).show();
                 return;
             }
 
             addMessageToChat(new ChatMessage(text, ChatMessage.Sender.USER));
             messageEditText.setText("");
-
-            // Show loading indicator
-            // TODO: Add a more sophisticated loading indicator
             Toast.makeText(this, "Generating response...", Toast.LENGTH_SHORT).show();
 
             executor.execute(() -> {
                 try {
-                    ModelOutput response = geminiClient.generateContent(text, null, currentConversation);
+                    // Pass the active ChatSession to the client
+                    ModelOutput response = currentChatSession.sendMessage(text);
                     handler.post(() -> {
                         if (response != null && response.getText() != null) {
                             addMessageToChat(new ChatMessage(response.getText(), ChatMessage.Sender.GEMINI));
-                            // TODO: Handle images in the response
+                            // Update the persisted conversation with the new API metadata
+                            currentConversation.setCid(currentChatSession.getCid());
+                            currentConversation.setRid(currentChatSession.getRid());
+                            currentConversation.setRcid(currentChatSession.getRcid());
+                            conversationManager.saveConversation(currentConversation);
                         } else {
                             Toast.makeText(MainActivity.this, "Received an empty response.", Toast.LENGTH_SHORT).show();
                         }
@@ -117,8 +121,6 @@ public class MainActivity extends AppCompatActivity {
             });
         });
     }
-
-    // ... (rest of the methods are the same as before)
 
     private void setupToolbarAndDrawer() {
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -132,12 +134,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupChatRecyclerView() {
-        RecyclerView recyclerView = findViewById(R.id.recycler_view_chat);
+        chatRecyclerView = findViewById(R.id.recycler_view_chat);
         messages = new ArrayList<>();
         chatAdapter = new ChatAdapter(messages);
-        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        recyclerView.setLayoutManager(layoutManager);
-        recyclerView.setAdapter(chatAdapter);
+        chatRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        chatRecyclerView.setAdapter(chatAdapter);
     }
 
     private void loadConversations() {
@@ -163,6 +164,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void loadChat(Conversation conversation) {
         currentConversation = conversation;
+        // Create a new ChatSession for the loaded conversation
+        currentChatSession = new ChatSession(geminiClient, conversation.getCid(), conversation.getRid(), conversation.getRcid());
+
         messages.clear();
         messages.addAll(conversation.getMessages());
         chatAdapter.notifyDataSetChanged();
@@ -174,7 +178,7 @@ public class MainActivity extends AppCompatActivity {
     private void addMessageToChat(ChatMessage message) {
         messages.add(message);
         chatAdapter.notifyItemInserted(messages.size() - 1);
-        findViewById(R.id.recycler_view_chat).scrollToPosition(messages.size() - 1);
+        chatRecyclerView.scrollToPosition(messages.size() - 1);
 
         if (currentConversation.getMessages().isEmpty()) {
             currentConversation.setTitle(message.getText());
@@ -186,7 +190,7 @@ public class MainActivity extends AppCompatActivity {
         conversationManager.saveConversation(currentConversation);
 
         if (currentConversation.getMessages().size() == 1) {
-            loadConversations(); // Refresh drawer if it's a new chat with a new title
+            loadConversations();
         }
     }
 
@@ -224,7 +228,6 @@ public class MainActivity extends AppCompatActivity {
                          .putString("PSID", psidInput.getText().toString())
                          .putString("PSIDTS", psidtsInput.getText().toString())
                          .apply();
-                    // Re-initialize client with new credentials
                     initializeClient();
                 })
                 .setNegativeButton("Cancel", null)

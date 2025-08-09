@@ -16,11 +16,25 @@ public class ChatSession {
     private String rcid;
 
     /**
-     * Constructor is package-private. ChatSessions should be created via {@link GeminiClient#startChat()}.
+     * Constructor for starting a new chat.
      * @param client The GeminiClient instance to use for communication.
      */
     ChatSession(GeminiClient client) {
         this.client = client;
+    }
+
+    /**
+     * Constructor for continuing an existing chat from persisted metadata.
+     * @param client The GeminiClient instance.
+     * @param cid The existing conversation ID.
+     * @param rid The existing reply ID.
+     * @param rcid The existing reply candidate ID.
+     */
+    ChatSession(GeminiClient client, String cid, String rid, String rcid) {
+        this.client = client;
+        this.cid = cid;
+        this.rid = rid;
+        this.rcid = rcid;
     }
 
     /**
@@ -31,15 +45,11 @@ public class ChatSession {
      * @throws IOException if the network request fails.
      */
     public ModelOutput sendMessage(String prompt, List<File> files) throws IOException {
-        // Call the client's generateContent method, passing this session object.
         ModelOutput output = client.generateContent(prompt, files, this);
-
-        // After a successful response, update the session's metadata.
         if (output != null && output.getMetadata() != null) {
             List<String> metadata = output.getMetadata();
             if (metadata.size() > 0) this.cid = metadata.get(0);
             if (metadata.size() > 1) this.rid = metadata.get(1);
-            // The rcid for the *next* request is the one from the chosen candidate of the *current* response.
             this.rcid = output.getRcid();
         }
         return output;
