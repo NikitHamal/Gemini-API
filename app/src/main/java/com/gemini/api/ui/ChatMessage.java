@@ -1,5 +1,8 @@
 package com.gemini.api.ui;
 
+import com.gemini.api.client.models.Image;
+import java.util.List;
+
 /**
  * Represents a single message in the chat interface.
  */
@@ -11,11 +14,16 @@ public class ChatMessage {
 
     private final String text;
     private final Sender sender;
-    // TODO: Add support for images and other content types later.
+    private final List<Image> images;
 
-    public ChatMessage(String text, Sender sender) {
+    public ChatMessage(String text, Sender sender, List<Image> images) {
         this.text = text;
         this.sender = sender;
+        this.images = images;
+    }
+
+    public ChatMessage(String text, Sender sender) {
+        this(text, sender, null);
     }
 
     public String getText() {
@@ -24,5 +32,9 @@ public class ChatMessage {
 
     public Sender getSender() {
         return sender;
+    }
+
+    public List<Image> getImages() {
+        return images;
     }
 }

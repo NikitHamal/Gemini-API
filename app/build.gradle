@@ -6,6 +6,15 @@ android {
     namespace 'com.gemini.api'
     compileSdk 34
 
+    signingConfigs {
+        release {
+            storeFile file('gemini.jks')
+            storePassword 'g3m1n1-p@ssw0rd'
+            keyAlias 'gemini'
+            keyPassword 'g3m1n1-p@ssw0rd'
+        }
+    }
+
     defaultConfig {
         applicationId "com.gemini.api"
         minSdk 24
@@ -18,6 +27,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
