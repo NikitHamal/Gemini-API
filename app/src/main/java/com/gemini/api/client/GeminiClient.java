@@ -91,6 +91,36 @@ public class GeminiClient {
         }
     }
 
+    public void rotateCookies() throws IOException {
+        RequestBody requestBody = RequestBody.create("[000,\"-0000000000000000000\"]", MediaType.parse("application/json"));
+        String cookieValue = "__Secure-1PSID=" + secure1psid;
+        if (secure1psidts != null && !secure1psidts.isEmpty()) {
+            cookieValue += "; __Secure-1PSIDTS=" + secure1psidts;
+        }
+        Request request = new Request.Builder()
+                .url(ROTATE_COOKIES_URL)
+                .post(requestBody)
+                .header("Cookie", cookieValue)
+                .build();
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IOException("Cookie rotation failed with status code: " + response.code());
+            }
+            List<String> cookieHeaders = response.headers("Set-Cookie");
+            for (String header : cookieHeaders) {
+                if (header.startsWith("__Secure-1PSIDTS=")) {
+                    String[] parts = header.split(";");
+                    this.secure1psidts = parts[0].substring("__Secure-1PSIDTS=".length());
+                    return;
+                }
+            }
+        }
+    }
+
+    public ChatSession startChat() {
+        return new ChatSession(this);
+    }
+
     public ModelOutput generateContent(String prompt, List<File> files, ChatSession chatSession) throws IOException {
         if (accessToken == null) {
             throw new IllegalStateException("Client is not initialized. Please call init() first.");
@@ -154,10 +184,10 @@ public class GeminiClient {
                         for (JsonElement webImageElement : c12.get(1).getAsJsonArray()) {
                             try {
                                 JsonArray webImageData = webImageElement.getAsJsonArray();
-                                String url = webImageData.get(0).getAsJsonArray().get(0).getAsJsonArray().get(0).getAsString();
-                                String title = webImageData.get(7).getAsJsonArray().get(0).getAsString();
-                                String alt = webImageData.get(0).getAsJsonArray().get(4).getAsString();
-                                webImages.add(new WebImage(url, title, alt));
+                                String imageUrl = webImageData.get(0).getAsJsonArray().get(0).getAsJsonArray().get(0).getAsString();
+                                String imageTitle = webImageData.get(7).getAsJsonArray().get(0).getAsString();
+                                String imageAlt = webImageData.get(0).getAsJsonArray().get(4).getAsString();
+                                webImages.add(new WebImage(imageUrl, imageTitle, imageAlt));
                             } catch (Exception e) { /* Ignore */ }
                         }
                     }
@@ -169,13 +199,13 @@ public class GeminiClient {
                             for (JsonElement generatedImageElement : generatedImagesArray) {
                                 try {
                                     JsonArray generatedImageData = generatedImageElement.getAsJsonArray();
-                                    String url = generatedImageData.get(0).getAsJsonArray().get(3).getAsJsonArray().get(3).getAsString();
-                                    String title = "[Generated Image " + generatedImageData.get(3).getAsJsonArray().get(6).getAsString() + "]";
-                                    String alt = generatedImageData.get(3).getAsJsonArray().get(5).getAsJsonArray().get(0).getAsString();
+                                    String genImageUrl = generatedImageData.get(0).getAsJsonArray().get(3).getAsJsonArray().get(3).getAsString();
+                                    String genImageTitle = "[Generated Image " + generatedImageData.get(3).getAsJsonArray().get(6).getAsString() + "]";
+                                    String genImageAlt = generatedImageData.get(3).getAsJsonArray().get(5).getAsJsonArray().get(0).getAsString();
                                     Map<String, String> cookieMap = new HashMap<>();
                                     cookieMap.put("__Secure-1PSID", this.secure1psid);
                                     if (this.secure1psidts != null) cookieMap.put("__Secure-1PSIDTS", this.secure1psidts);
-                                    generatedImages.add(new GeneratedImage(url, title, alt, cookieMap));
+                                    generatedImages.add(new GeneratedImage(genImageUrl, genImageTitle, genImageAlt, cookieMap));
                                 } catch (Exception e) { /* Ignore */ }
                             }
                         }
@@ -197,11 +227,12 @@ public class GeminiClient {
 
     private String buildFReq(String prompt, ChatSession chatSession, List<File> files) throws IOException {
         Gson gson = new Gson();
-        List<Object> promptAndFiles = new ArrayList<>();
-        promptAndFiles.add(prompt);
+        List<Object> promptAndFilesContainer = new ArrayList<>();
+        List<Object> promptStructure = new ArrayList<>();
+        promptStructure.add(prompt);
         if (files != null && !files.isEmpty()) {
-            promptAndFiles.add(0);
-            promptAndFiles.add(null);
+            promptStructure.add(0);
+            promptStructure.add(null);
             List<List<Object>> fileDataList = new ArrayList<>();
             for (File file : files) {
                 String uploadedFileId = uploadFile(file);
@@ -210,12 +241,13 @@ public class GeminiClient {
                 fileInfo.add(file.getName());
                 fileDataList.add(fileInfo);
             }
-            promptAndFiles.add(fileDataList);
+            promptStructure.add(fileDataList);
         } else {
-             promptAndFiles.addAll(Arrays.asList(0, null, null, null, null, 0));
+            promptStructure.addAll(Arrays.asList(0, null, null, null, null, 0));
         }
+        promptAndFilesContainer.add(promptStructure);
         List<Object> innerList = new ArrayList<>();
-        innerList.add(promptAndFiles);
+        innerList.add(promptAndFilesContainer);
         innerList.add(Collections.singletonList("en"));
         List<Object> sessionPart = new ArrayList<>();
         if (chatSession != null && chatSession.getCid() != null) {
@@ -246,5 +278,62 @@ public class GeminiClient {
         return gson.toJson(outerList);
     }
 
-    // ... other methods ...
+    private int findBodyIndex(JsonArray responseJson) {
+        for (int i = 0; i < responseJson.size(); i++) {
+            try {
+                JsonArray part = responseJson.get(i).getAsJsonArray();
+                if (part.size() > 2 && !part.get(2).isJsonNull()) {
+                    String mainPartJson = part.get(2).getAsString();
+                    JsonArray mainPart = JsonParser.parseString(mainPartJson).getAsJsonArray();
+                    if (mainPart.size() > 4 && !mainPart.get(4).isJsonNull() && !mainPart.get(4).getAsJsonArray().isEmpty()) {
+                        return i;
+                    }
+                }
+            } catch (Exception e) { /* Ignore */ }
+        }
+        return -1;
+    }
+
+    private JsonArray findImageBody(JsonArray responseJson, int start_index, int candidate_index) {
+        for (int i = start_index; i < responseJson.size(); i++) {
+            try {
+                JsonArray part = responseJson.get(i).getAsJsonArray();
+                if (part.size() > 2 && !part.get(2).isJsonNull()) {
+                    String mainPartJson = part.get(2).getAsString();
+                    JsonArray mainPart = JsonParser.parseString(mainPartJson).getAsJsonArray();
+                    if (mainPart.size() > 4 && !mainPart.get(4).isJsonNull() && mainPart.get(4).getAsJsonArray().size() > candidate_index) {
+                        JsonElement imgCandidateElement = mainPart.get(4).getAsJsonArray().get(candidate_index);
+                        if (!imgCandidateElement.isJsonNull() && imgCandidateElement.getAsJsonArray().size() > 12) {
+                            JsonElement c12_img = imgCandidateElement.getAsJsonArray().get(12);
+                            if (!c12_img.isJsonNull() && c12_img.getAsJsonArray().size() > 7 && !c12_img.getAsJsonArray().get(7).isJsonNull() && !c12_img.getAsJsonArray().get(7).getAsJsonArray().isEmpty()) {
+                                return mainPart;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) { /* Ignore */ }
+        }
+        return null;
+    }
+
+    public String uploadFile(File file) throws IOException {
+        if (!file.exists()) {
+            throw new FileNotFoundException("File not found: " + file.getAbsolutePath());
+        }
+        RequestBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", file.getName(), RequestBody.create(file, MediaType.parse("application/octet-stream")))
+                .build();
+        Request request = new Request.Builder()
+                .url(UPLOAD_URL)
+                .post(requestBody)
+                .header("Push-ID", "feeds/mcudyrk2a4khkz")
+                .build();
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IOException("File upload failed with status code: " + response.code());
+            }
+            return response.body().string();
+        }
+    }
 }
