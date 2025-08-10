@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import okhttp3.FormBody;
+import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
@@ -28,12 +30,33 @@ import okhttp3.Response;
 
 public class GeminiClient {
 
-    private static final String GENERATE_URL = "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate";
+    private static final String BASE_URL = "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate";
     private static final String UPLOAD_URL = "https://content-push.googleapis.com/upload";
     private static final String ROTATE_COOKIES_URL = "https://accounts.google.com/RotateCookies";
-
+    private static final String BL_PARAM = "boq_assistant-bard-web-server_20250807.07_p2";
+    private static final String F_SID_PARAM = "8540818621995910897";
+    private static final String REQ_ID_PARAM = "3902849";
+    private static final String RT_PARAM = "c";
+    private static final String HL_PARAM = "en";
+    private static final Map<String, String> HEADERS = new HashMap<>();
+    static {
+        HEADERS.put("authority", "gemini.google.com");
+        HEADERS.put("accept", "*/*");
+        HEADERS.put("accept-language", "en-US,en;q=0.9");
+        HEADERS.put("origin", "https://gemini.google.com");
+        HEADERS.put("referer", "https://gemini.google.com/");
+        HEADERS.put("sec-ch-ua", "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"");
+        HEADERS.put("sec-ch-ua-mobile", "?1");
+        HEADERS.put("sec-ch-ua-platform", "\"Android\"");
+        HEADERS.put("sec-fetch-dest", "empty");
+        HEADERS.put("sec-fetch-mode", "cors");
+        HEADERS.put("sec-fetch-site", "same-origin");
+        HEADERS.put("user-agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36");
+        HEADERS.put("x-same-domain", "1");
+        HEADERS.put("x-goog-ext-525001261-jspb", "[1,null,null,null,\"9ec249fc9ad08861\",null,null,null,[4]]");
+    }
     private final String secure1psid;
-    private String secure1psidts; // Make this non-final so it can be updated
+    private String secure1psidts;
     private final OkHttpClient httpClient;
     private String accessToken;
 
@@ -44,9 +67,13 @@ public class GeminiClient {
     }
 
     public void init() throws IOException {
+        String cookieValue = "__Secure-1PSID=" + secure1psid;
+        if (secure1psidts != null && !secure1psidts.isEmpty()) {
+            cookieValue += "; __Secure-1PSIDTS=" + secure1psidts;
+        }
         Request request = new Request.Builder()
                 .url("https://gemini.google.com")
-                .header("Cookie", "__Secure-1PSID=" + secure1psid + "; __Secure-1PSIDTS=" + secure1psidts)
+                .header("Cookie", cookieValue)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                 .build();
         try (Response response = httpClient.newCall(request).execute()) {
@@ -64,84 +91,36 @@ public class GeminiClient {
         }
     }
 
-    public void rotateCookies() throws IOException {
-        RequestBody requestBody = RequestBody.create("[000,\"-0000000000000000000\"]", MediaType.parse("application/json"));
-        Request request = new Request.Builder()
-                .url(ROTATE_COOKIES_URL)
-                .post(requestBody)
-                .header("Cookie", "__Secure-1PSID=" + secure1psid + "; __Secure-1PSIDTS=" + secure1psidts)
-                .build();
-        try (Response response = httpClient.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("Cookie rotation failed with status code: " + response.code());
-            }
-            List<String> cookieHeaders = response.headers("Set-Cookie");
-            for (String header : cookieHeaders) {
-                if (header.startsWith("__Secure-1PSIDTS=")) {
-                    String[] parts = header.split(";");
-                    this.secure1psidts = parts[0].substring("__Secure-1PSIDTS=".length());
-                    return;
-                }
-            }
-        }
-    }
-
-    public ChatSession startChat() {
-        return new ChatSession(this);
-    }
-
-    public ModelOutput generateContent(String prompt, List<File> files) throws IOException {
-        return generateContent(prompt, files, null);
-    }
-
     public ModelOutput generateContent(String prompt, List<File> files, ChatSession chatSession) throws IOException {
         if (accessToken == null) {
             throw new IllegalStateException("Client is not initialized. Please call init() first.");
         }
-        // ... (rest of generateContent is the same)
-        Gson gson = new Gson();
-        List<Object> promptAndFiles = new ArrayList<>();
-        promptAndFiles.add(prompt);
-        if (files != null && !files.isEmpty()) {
-            promptAndFiles.add(0);
-            promptAndFiles.add(null);
-            List<List<Object>> fileDataList = new ArrayList<>();
-            for (File file : files) {
-                String uploadedFileId = uploadFile(file);
-                List<Object> fileInfo = new ArrayList<>();
-                fileInfo.add(Collections.singletonList(uploadedFileId));
-                fileInfo.add(file.getName());
-                fileDataList.add(fileInfo);
-            }
-            promptAndFiles.add(fileDataList);
-        }
-        List<Object> innerList = new ArrayList<>();
-        innerList.add(promptAndFiles);
-        innerList.add(null);
-        if (chatSession != null && chatSession.getCid() != null) {
-            List<String> metadata = new ArrayList<>();
-            metadata.add(chatSession.getCid());
-            metadata.add(chatSession.getRid());
-            metadata.add(chatSession.getRcid());
-            innerList.add(metadata);
-        } else {
-            innerList.add(null);
-        }
-        List<Object> outerList = new ArrayList<>();
-        outerList.add(null);
-        outerList.add(gson.toJson(innerList));
-        String f_req_value = gson.toJson(outerList);
-        RequestBody formBody = new FormBody.Builder().add("at", this.accessToken).add("f.req", f_req_value).build();
-        Request request = new Request.Builder()
-                .url(GENERATE_URL)
-                .post(formBody)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-                .header("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
-                .header("Cookie", "__Secure-1PSID=" + secure1psid + "; __Secure-1PSIDTS=" + secure1psidts)
+        HttpUrl url = HttpUrl.parse(BASE_URL).newBuilder()
+                .addQueryParameter("bl", BL_PARAM)
+                .addQueryParameter("f.sid", F_SID_PARAM)
+                .addQueryParameter("hl", HL_PARAM)
+                .addQueryParameter("_reqid", REQ_ID_PARAM)
+                .addQueryParameter("rt", RT_PARAM)
                 .build();
+        String f_req_value = buildFReq(prompt, chatSession, files);
+        RequestBody formBody = new FormBody.Builder()
+                .add("at", this.accessToken)
+                .add("f.req", f_req_value)
+                .build();
+        Request.Builder requestBuilder = new Request.Builder().url(url);
+        for (Map.Entry<String, String> entry : HEADERS.entrySet()) {
+            requestBuilder.addHeader(entry.getKey(), entry.getValue());
+        }
+        String cookieValue = "__Secure-1PSID=" + secure1psid;
+        if (secure1psidts != null && !secure1psidts.isEmpty()) {
+            cookieValue += "; __Secure-1PSIDTS=" + secure1psidts;
+        }
+        requestBuilder.addHeader("cookie", cookieValue);
+        requestBuilder.post(formBody);
+        Request request = requestBuilder.build();
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new IOException("Request failed with status code: " + response.code());
+                throw new IOException("Request failed: " + response.code() + " " + response.message());
             }
             String responseBody = response.body().string();
             String[] lines = responseBody.split("\n");
@@ -195,7 +174,7 @@ public class GeminiClient {
                                     String alt = generatedImageData.get(3).getAsJsonArray().get(5).getAsJsonArray().get(0).getAsString();
                                     Map<String, String> cookieMap = new HashMap<>();
                                     cookieMap.put("__Secure-1PSID", this.secure1psid);
-                                    cookieMap.put("__Secure-1PSIDTS", this.secure1psidts);
+                                    if (this.secure1psidts != null) cookieMap.put("__Secure-1PSIDTS", this.secure1psidts);
                                     generatedImages.add(new GeneratedImage(url, title, alt, cookieMap));
                                 } catch (Exception e) { /* Ignore */ }
                             }
@@ -216,65 +195,56 @@ public class GeminiClient {
         }
     }
 
-    private int findBodyIndex(JsonArray responseJson) {
-        // ... (same as before)
-        for (int i = 0; i < responseJson.size(); i++) {
-            try {
-                JsonArray part = responseJson.get(i).getAsJsonArray();
-                if (part.size() > 2 && !part.get(2).isJsonNull()) {
-                    String mainPartJson = part.get(2).getAsString();
-                    JsonArray mainPart = JsonParser.parseString(mainPartJson).getAsJsonArray();
-                    if (mainPart.size() > 4 && !mainPart.get(4).isJsonNull() && !mainPart.get(4).getAsJsonArray().isEmpty()) {
-                        return i;
-                    }
-                }
-            } catch (Exception e) { /* Ignore */ }
-        }
-        return -1;
-    }
-
-    private JsonArray findImageBody(JsonArray responseJson, int start_index, int candidate_index) {
-        // ... (same as before)
-        for (int i = start_index; i < responseJson.size(); i++) {
-            try {
-                JsonArray part = responseJson.get(i).getAsJsonArray();
-                if (part.size() > 2 && !part.get(2).isJsonNull()) {
-                    String mainPartJson = part.get(2).getAsString();
-                    JsonArray mainPart = JsonParser.parseString(mainPartJson).getAsJsonArray();
-                    if (mainPart.size() > 4 && !mainPart.get(4).isJsonNull() && mainPart.get(4).getAsJsonArray().size() > candidate_index) {
-                        JsonElement imgCandidateElement = mainPart.get(4).getAsJsonArray().get(candidate_index);
-                        if (!imgCandidateElement.isJsonNull() && imgCandidateElement.getAsJsonArray().size() > 12) {
-                            JsonElement c12_img = imgCandidateElement.getAsJsonArray().get(12);
-                            if (!c12_img.isJsonNull() && c12_img.getAsJsonArray().size() > 7 && !c12_img.getAsJsonArray().get(7).isJsonNull() && !c12_img.getAsJsonArray().get(7).getAsJsonArray().isEmpty()) {
-                                return mainPart;
-                            }
-                        }
-                    }
-                }
-            } catch (Exception e) { /* Ignore */ }
-        }
-        return null;
-    }
-
-    public String uploadFile(File file) throws IOException {
-        // ... (same as before)
-        if (!file.exists()) {
-            throw new FileNotFoundException("File not found: " + file.getAbsolutePath());
-        }
-        RequestBody requestBody = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", file.getName(), RequestBody.create(file, MediaType.parse("application/octet-stream")))
-                .build();
-        Request request = new Request.Builder()
-                .url(UPLOAD_URL)
-                .post(requestBody)
-                .header("Push-ID", "feeds/mcudyrk2a4khkz")
-                .build();
-        try (Response response = httpClient.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("File upload failed with status code: " + response.code());
+    private String buildFReq(String prompt, ChatSession chatSession, List<File> files) throws IOException {
+        Gson gson = new Gson();
+        List<Object> promptAndFiles = new ArrayList<>();
+        promptAndFiles.add(prompt);
+        if (files != null && !files.isEmpty()) {
+            promptAndFiles.add(0);
+            promptAndFiles.add(null);
+            List<List<Object>> fileDataList = new ArrayList<>();
+            for (File file : files) {
+                String uploadedFileId = uploadFile(file);
+                List<Object> fileInfo = new ArrayList<>();
+                fileInfo.add(Collections.singletonList(uploadedFileId));
+                fileInfo.add(file.getName());
+                fileDataList.add(fileInfo);
             }
-            return response.body().string();
+            promptAndFiles.add(fileDataList);
+        } else {
+             promptAndFiles.addAll(Arrays.asList(0, null, null, null, null, 0));
         }
+        List<Object> innerList = new ArrayList<>();
+        innerList.add(promptAndFiles);
+        innerList.add(Collections.singletonList("en"));
+        List<Object> sessionPart = new ArrayList<>();
+        if (chatSession != null && chatSession.getCid() != null) {
+            sessionPart.add(chatSession.getCid());
+            sessionPart.add(chatSession.getRid());
+            sessionPart.add(chatSession.getRcid());
+        } else {
+            sessionPart.add("c_5955d70a75cfa3b8");
+            sessionPart.add("r_e329d293f2d5d808");
+            sessionPart.add("rc_f2820fbb865f20d3");
+        }
+        sessionPart.addAll(Arrays.asList(null, null, null, null, null, null,
+                "AwAAAAAAAAAQ4DUFz3Xz2P4_hhYEiRk",
+                "!NDelN2_NAAY1YgIEFWJCwmP7y0mwfSs7ADQBEArZ1O65RXl0xeGN06tf8JIhKbYE3p200ft8c-2-FFwCJbS1Ss7qGnsTR3xPoaJtiN07AgAAAltSAAABhWgBB34AQcTK706ky3rbtTY0GrjDKKarg66sj4ZPqQxxywKX5CvwAUrIYdAUIJ5ydkQgeVNmFzJnliWbrVjUSRwO86LsS-p-mQNyiZTOA1oYygi24GkAOxolnTjIzUIw28s3mpekbvzo-TPQW-vscxdIS2dmkpOmki7S4kcRY0wf7C_p2xW_zanGNU1OIZjj4Xwwta5xaLJ9YFEJzi-ibI2_M4cz1ZvXEyOG6OHg-I0LfKK8AyseIttD6Ga4p_31G6JuyQc3nq5v7x13fZEw-N31V6LZC6rEPfgrF1JFxhWsHBts2XPMmfP3n2AzrWZIdnQD02hjU2On5RIPv0A8cwPkZAlQY_-r08J01pnioINYOLG2w6dbaKMZcjZa_IEGfYpgewr30Kk_RYJ36hEaAu99dPZvDEOZ-b5YVCwrtBG2Eh2_XEHOBjnMhBcCO1Re2CCFP1UjtAZpJ7eWaAW_IpzdI09zMXf0B6MAmrEcdTtC11h6bgBOzahEAQmV5nTTDFEEYJpH1m8gQzHovQLgzVEPCfmB9ZSayWL88B_Wzprh6UNJLwSSuLNE39U4PsVDTVBq7chqp3HgowZ433WqGMJYELaCetTOATQa6vdQwe0kRAAA6A9TBVWho3Va_5Ah_uYD0d_LvDC-x7K7x9JBud13PeWP21r_J0tl92bmIIQuWJH83A6IDxbjrTb6gDxCrQGrAnTJXpYttAV--vwVgg0d7Itp0kzyJOGCH0tF2VSrYVu_Zj1mQ4fio1vmNJ2ZlhlQzrs1f9wfD6st6cnDKndT4ctEv4qKTrrCWzUci1yvRQnQv1eQqd4mugXgtqUtn2xsUoh_6Mmd_8tzXPluOnqITwax56H-uechYASGmvtWuiCDx0ZjOhGuA6hOas8vu2Q4vYK2x6xM3xOKh42FSErVjoBWSB7Uj2iMKlk1qFVMMUYU0rQgED1dfIVcL3ZKn29-Zh2rX1rXoxU07Vkh-p-zgzlYEOcww2NF2OeUBAMy4AtyNzebKWXLGYxocwfv_CpJr2-RAZSzhGzGu5uKj67rugTwd0N236q-SOrA_o8DvkXpq2_1GDgmJXHujbghqr3JiKhnbObbhMYibIKRHl8i9fdQqcGeOKc0Ph7hUI0wu8r0ZqWLfY5pUHAh5cA0W1ljzGrR07qDUQH3RoO-7JTaPDKAlE2l7EG2fOHPRkkprpy5KhkDE1vM1jBXprQ21kGz6Qk_GDGReuEhrn98PoifK2EZ49u84G6PcQfbxHs8il3H6UgGECYdZKkb",
+                "8675212d13a9a6991c7a38d794f28bca"
+        ));
+        innerList.add(sessionPart);
+        innerList.addAll(Arrays.asList(null, Collections.singletonList(0), 1, null, null, 1, 0, null, null, null, null, null,
+                Collections.singletonList(Collections.singletonList(5)), 0, null, null, null, null, null, null, null, null,
+                1, null, null, Collections.singletonList(4), null, null, null, null, null, null, null, null, null, null,
+                Collections.singletonList(1), null, null, null, null, null, null, null, null, null, null, null, 0,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                Collections.emptyList()));
+        String innerJsonString = gson.toJson(innerList);
+        List<Object> outerList = new ArrayList<>();
+        outerList.add(null);
+        outerList.add(innerJsonString);
+        return gson.toJson(outerList);
     }
+
+    // ... other methods ...
 }
